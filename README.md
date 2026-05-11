@@ -1,25 +1,26 @@
 # Server Bootstrap
 
-Linux 服务器一键初始化工具包。交互式管理 SSH 用户、密钥、sudo 权限、安全加固及共享工作区。
+Linux 服务器一键初始化工具包。交互式管理 SSH 用户、密钥、sudo 权限、安全加固、共享工作区及常用软件安装。
 
 ## 脚本列表
 
-| 脚本 | 功能 | 行数 |
-|------|------|------|
-| `user-manager.sh` | 用户管理、SSH 密钥、sudo 权限、安全加固 | 1400+ |
-| `shared-workspace-setup.sh` | 共享工作区、目录权限、用户组管理 | 660+ |
+| 脚本                        | 功能                                     | 行数  |
+| --------------------------- | ---------------------------------------- | ----- |
+| `user-manager.sh`           | 用户管理、SSH 密钥、sudo 权限、安全加固  | 1400+ |
+| `shared-workspace-setup.sh` | 共享工作区、目录权限、用户组管理         | 660+  |
+| `package-install.sh`        | 常用软件一键安装（15 个软件 + 全部安装） | 1163+ |
 
 ## 快速开始
 
 ```bash
-# 克隆仓库
-git clone https://github.com/你的用户名/server-bootstrap.git
+# 1. 克隆或下载脚本
+git clone https://github.com/XinshengLM/server-bootstrap.git
 cd server-bootstrap
 
-# 上传到服务器
+# 2. 上传到服务器
 scp *.sh root@你的服务器IP:/root/
 
-# 登录服务器后执行
+# 3. 登录服务器后执行
 ssh root@你的服务器IP
 chmod +x *.sh
 ```
@@ -69,7 +70,7 @@ sudo bash shared-workspace-setup.sh
 ├── documents/   文档资料
 ├── scripts/     脚本工具
 ├── backup/      备份
-├── resources/   资源/素材
+├── resources/   资源/素材（安装包、镜像、大文件）
 └── tmp/         临时文件 (>7天自动清理)
 ```
 
@@ -80,25 +81,88 @@ sudo bash shared-workspace-setup.sh
 - 路径字符白名单 + 深度校验 + 遍历攻击防护
 - 原子写入、信号捕获、回滚栈
 
-## 典型工作流
+## package-install.sh — 常用软件一键安装
 
 ```bash
-# 1. root 登录，运行用户管理
+sudo bash package-install.sh
+```
+
+### 支持软件
+
+| #   | 软件     | 版本    | 功能                                  | 安全防护 |
+| --- | -------- | ------- | ------------------------------------- | -------- |
+| 1   | Node.js  | 24.15.0 | 支持多版本（自动检测架构 x64/arm64）  |          |
+| 2   | Python   | 3.12    | 自动检测发行版（apt/yum/apk/pacman）  |          |
+| 3   | Docker   | 最新    | 官方安装脚本 + systemd 服务 + Compose |          |
+| 4   | MySQL    | 8.0     | 自动添加 APT 仓库 + systemd 服务启动  |          |
+| 5   | 1Panel   | 最新    | 官方安装脚本                          |          |
+| 6   | Nginx    | 1.24    | 官方 PPA / EPEL 支持                  |          |
+| 7   | 7-Zip    | 24.05   | 自动检测发行版安装                    |          |
+| 8   | jq       | 最新    | JSON 处理工具                         |          |
+| 9   | fd       | 9.0.0   | 快速查找工具（比 find 快 10 倍）      |          |
+| 10  | bat      | 最新    | cat 替代（语法高亮、行号、自动分页）  |          |
+| 11  | Fail2Ban | 最新    | SSH 暴力破解防护（自动封禁 IP）       | ✅       |
+| 12  | UFW      | 最新    | 防火墙管理（iptables 前端）           | ✅       |
+| 13  | Maldet   | 最新    | 挖矿/勒索病毒扫描（检测加密文件）     | ✅       |
+| 14  | htop     | 最新    | 交互式进程监控（top 的替代）          | ✅       |
+
+### 安全特性
+
+- **信号捕获 + 回滚栈**：中断时自动清理已下载的安装包
+- **版本管理**：升级失败时自动回滚到旧版本
+- **环境变量设置**：Node.js 安装后自动更新 PATH
+- **发行版自动检测**：apt/yum/apk/pacman/dnf 适配
+- **依赖冲突处理**：安装失败时自动回滚
+
+### 一键全部安装
+
+选项 `15) 一键全部安装` 会自动依次安装：
+
+1. Node.js 24.15.0
+2. Python 3.12
+3. Docker & Compose
+4. MySQL 8.0
+5. 1Panel
+6. Nginx 1.24
+7. 7-Zip 24.05
+8. jq
+9. fd
+10. bat
+11. Fail2Ban
+12. UFW
+
+## 推荐工作流
+
+```bash
+# 1. root 登录，运行软件安装
+sudo bash package-install.sh
+# → 选 13) 安装 Maldet（挖矿/勒索扫描）
+# → 选 14) 安装 htop（进程监控）
+# → 选 1) 安装 Node.js
+# → 选 3) 安装 Docker
+
+# 2. 配置用户
 sudo bash user-manager.sh
 # → 创建新用户（SSH 密钥 + NOPASSWD sudo）
-# → 退出，用新用户登录验证
+# → 用新用户登录测试
 
-# 2. 新用户登录，验证 sudo
-sudo whoami  # 应输出 root
-
-# 3. 确认没问题后，运行安全加固
+# 3. 安全加固
 sudo bash user-manager.sh
 # → 选 7) SSH 安全加固
+# → 禁 root SSH 登录
+# → 禁用密码登录
+# → 修改 SSH 端口
 
-# 4. 设置共享工作区
+# 4. 安装 Fail2Ban（如果 package-install.sh 没装）
+sudo bash package-install.sh
+# → 选 11) 安装 Fail2Ban
+# → 重启 SSH 服务
+# → 自动封禁暴力破解 IP
+
+# 5. 设置共享工作区
 sudo bash shared-workspace-setup.sh
 # → 选 1) 初始化
-# → 选 2) 管理用户访问
+# → 选 2) 添加用户到共享组
 ```
 
 ## 救急方案
@@ -109,6 +173,11 @@ sudo bash shared-workspace-setup.sh
 2. 选 5) 生成 VNC 恢复命令
 3. 复制命令到云控制台 VNC 以 root 执行
 
-## License
+## 更新日志
 
-MIT
+### v1.2 (2026-05-12)
+
+- 新增 `package-install.sh` v1.2（15 个常用软件 + 全部安装）
+- 新增安全防护工具：Maldet（挖矿/勒索扫描）、htop（进程监控）
+- 新增一键全部安装功能
+- 更新 `README.md`，添加完整软件列表和使用流程
