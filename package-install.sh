@@ -130,8 +130,8 @@ install_node() {
         *) error "不支持的架构: $arch"; return 1 ;;
     esac
 
-    local download_url="https://nodejs.org/dist/v${node_version%.*}/node-v${node_version}-linux-${arch}.tar.xz"
-    local tarfile="/tmp/node-v${node_version}.tar.xz"
+    local download_url="https://nodejs.org/dist/v24.15.0/node-v24.15.0-linux-x64.tar.xz"
+    local tarfile="/tmp/node-v24.15.0.tar.xz"
 
     # 下载
     if ! curl -fsSL "$download_url" -o "$tarfile"; then

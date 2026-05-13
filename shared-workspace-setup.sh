@@ -273,22 +273,6 @@ init_workspace() {
     echo -e "    └── tmp/        临时文件 (自动清理)"
     echo ""
 
-# ============================================================
-#  配置共享环境（v2 关键改动：不改全局 umask）
-# ============================================================
-    echo -e "  路径:  ${CYAN}$SHARED_DIR${NC}"
-    echo -e "  组:    ${CYAN}$SHARED_GROUP${NC}"
-    echo ""
-    echo -e "  结构:"
-    echo -e "    $SHARED_DIR/"
-    echo -e "    ├── projects/   项目文件"
-    echo -e "    ├── documents/  文档资料"
-    echo -e "    ├── scripts/    脚本工具"
-    echo -e "    ├── backup/      备份"
-    echo -e "    ├── resources/   资源/素材（安装包、镜像、大文件）"
-    echo -e "    └── tmp/        临时文件 (自动清理)"
-    echo ""
-
     press_any_key
 }
 

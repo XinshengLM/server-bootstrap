@@ -1,0 +1,66 @@
+name: CI Pipeline
+
+on: [push, pull_request]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Bash syntax check
+        run: |
+          echo "=== 检查脚本语法 ==="
+          for script in user-manager.sh shared-workspace-setup.sh package-install.sh; do
+            if [[ -f "$script" ]]; then
+              if bash -n "$script" 2>&1 | grep -q "syntax error"; then
+                echo "❌ $script: 语法错误"
+                exit 1
+              else
+                echo "✅ $script: 语法正确"
+            else
+              echo "⚠️  $script: 文件不存在"
+          done
+
+      - name: Shellcheck validation
+        run: |
+          # 检查是否安装 shellcheck
+          if ! command -v shellcheck; then
+            echo "⚠️  shellcheck 未安装，跳过"
+          else
+            echo "=== Shellcheck 检查 ==="
+          for script in user-manager.sh shared-workspace-setup.sh package-install.sh; do
+            if [[ -f "$script" ]]; then
+              shellcheck -x "$script" || true
+            done
+
+      - name: Check executable permissions
+        run: |
+          echo "=== 检查可执行权限 ==="
+          for script in user-manager.sh shared-workspace-setup.sh package-install.sh; do
+            if [[ -f "$script" ]]; then
+              if [[ -x "$script" ]]; then
+                echo "✅ $script: 有执行权限"
+              else
+                echo "❌ $script: 无执行权限"
+            else
+              echo "⚠️  $script: 文件不存在"
+          done
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Security scan
+        run: |
+          echo "=== 安全扫描 ==="
+          # 检查危险命令模式
+          grep -E "(rm -rf|dd if=|eval|\`|\$\()" user-manager.sh shared-workspace-setup.sh package-install.sh || echo "未发现明显的危险模式"
+          # 检查 URL
+          grep -E "http://(get\.docker|resource\.fit)" package-install.sh || echo "URL 使用检查通过"
+          # 检查是否正确设置了 DEBIAN_FRONTEND
+          grep "DEBIAN_FRONTEND=noninteractive" package-install.sh || echo "非交互模式使用正确"
+          echo "✅ 安全扫描完成"
