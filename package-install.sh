@@ -220,12 +220,12 @@ install_python() {
             # 添加 deadsnakes PPA（多版本 Python）
             if ! grep -q "deadsnakes" /etc/apt/sources.list.d/*.list 2>/dev/null; then
                 info "添加 deadsnakes PPA..."
-                apt-get install -y software-properties-common
+                DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y software-properties-common
                 add-apt-repository ppa:deadsnakes/ppa -y
             fi
 
             info "正在安装 Python $python_version..."
-            apt-get install -y python$python_version python$python_version-venv python$python_version-dev
+            DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y python$python_version python$python_version-venv python$python_version-dev
             pkg_rollback_push "apt-get remove -y python$python_version"
             ;;
 
@@ -358,7 +358,7 @@ install_mysql() {
     # 添加 MySQL APT 仓库（如果是 Debian/Ubuntu）
     if [[ "$pkg_manager" == "apt" ]]; then
         info "配置 MySQL APT 仓库..."
-        apt-get install -y software-properties-common
+        DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y software-properties-common
         if ! grep -q "mysql-apt-config" /etc/apt/sources.list.d/*.list 2>/dev/null; then
             wget -qO - https://repo.mysql.com/apt/mysql-apt-config_0.8.0-1_all.deb
             dpkg -i mysql-apt-config_0.8.0-1_all.deb
@@ -369,7 +369,7 @@ install_mysql() {
     # 安装 MySQL Server
     info "正在安装 MySQL Server..."
     if [[ "$pkg_manager" == "apt" ]]; then
-        DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server
+        DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y mysql-server
     else
         yum install -y mysql-server
     fi
@@ -478,11 +478,11 @@ install_nginx() {
     # 安装
     if [[ "$pkg_manager" == "apt" ]]; then
         info "添加 Nginx 官方 PPA..."
-        apt-get install -y software-properties-common
+        DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y software-properties-common
         add-apt-repository ppa:ondrej/nginx-nginx-$nginx_version -y
         apt-get update
         info "正在安装 Nginx $nginx_version..."
-        apt-get install -y nginx
+        DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y nginx
     elif [[ "$pkg_manager" == "yum" ]]; then
         info "正在安装 Nginx..."
         yum install -y nginx
@@ -555,7 +555,7 @@ install_7z() {
     case "$pkg_manager" in
         apt)
             info "正在安装 7-Zip..."
-            DEBIAN_FRONTEND=noninteractive apt-get install -y p7zip-full
+            DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y p7zip-full
             ;;
         yum)
             info "正在安装 7-Zip..."
@@ -621,7 +621,7 @@ install_jq() {
     case "$pkg_manager" in
         apt)
             info "正在安装 jq..."
-            apt-get install -y jq
+            DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y jq
             ;;
         yum)
             info "正在安装 jq..."
@@ -732,7 +732,7 @@ install_bat() {
     case "$pkg_manager" in
         apt)
             info "正在安装 bat..."
-            apt-get install -y bat
+            DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y bat
             ;;
         yum)
             info "正在安装 bat..."
@@ -789,7 +789,7 @@ install_fail2ban() {
     # 安装
     if [[ "$pkg_manager" == "apt" ]]; then
         info "正在安装 Fail2Ban..."
-        apt-get install -y fail2ban
+        DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y fail2ban
         # 默认配置：监控 SSH 登录失败
         if [[ ! -f /etc/fail2ban/jail.local ]]; then
             mkdir -p /etc/fail2ban
@@ -862,7 +862,7 @@ install_ufw() {
 
     # 安装
     if [[ "$pkg_manager" == "apt" ]]; then
-        apt-get install -y ufw
+        DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y ufw
     elif [[ "$pkg_manager" == "apk" ]]; then
         apk add ufw
     fi
@@ -923,7 +923,7 @@ install_maldet() {
     case "$pkg_manager" in
         apt)
             info "正在安装 Maldet..."
-            apt-get install -y maldet
+            DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y maldet
             ;;
         yum)
             info "正在安装 Maldet..."
@@ -992,7 +992,7 @@ install_htop() {
     case "$pkg_manager" in
         apt)
             info "正在安装 htop..."
-            apt-get install -y htop
+            DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y htop
             ;;
         yum)
             info "正在安装 htop..."
