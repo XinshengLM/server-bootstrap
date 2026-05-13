@@ -96,6 +96,57 @@ SHARED_GROUP="sharedwork"
 SHARED_DIR="/home/workspace"
 
 # ============================================================
+#  软链接工具：为用户创建 ~/workspace → 共享目录
+# ============================================================
+create_user_symlink() {
+    local username="$1"
+    local user_home
+    user_home=$(getent passwd "$username" | cut -d: -f6)
+
+    if [[ -z "$user_home" || ! -d "$user_home" ]]; then
+        warn "用户 '$username' 的 home 目录不存在，跳过软链接"
+        return 1
+    fi
+
+    local link_path="$user_home/workspace"
+
+    # 已存在且指向正确目标
+    if [[ -L "$link_path" ]] && [[ "$(readlink "$link_path")" == "$SHARED_DIR" ]]; then
+        return 0
+    fi
+
+    # 已存在同名文件/目录（非软链接），不覆盖
+    if [[ -e "$link_path" ]] && [[ ! -L "$link_path" ]]; then
+        warn "用户 '$username' 的 ~/workspace 已存在且非软链接，跳过"
+        return 1
+    fi
+
+    # 创建软链接
+    ln -sf "$SHARED_DIR" "$link_path"
+    # 修改属主为用户本人
+    chown -h "$username":"$username" "$link_path"
+    success "已为 '$username' 创建 ~/workspace → $SHARED_DIR"
+}
+
+# 删除用户的软链接（从共享组移除时调用）
+remove_user_symlink() {
+    local username="$1"
+    local user_home
+    user_home=$(getent passwd "$username" | cut -d: -f6)
+
+    if [[ -z "$user_home" ]]; then
+        return 1
+    fi
+
+    local link_path="$user_home/workspace"
+
+    if [[ -L "$link_path" ]]; then
+        rm -f "$link_path"
+        success "已删除 '$username' 的 ~/workspace 软链接"
+    fi
+}
+
+# ============================================================
 #  原子写入工具
 # ============================================================
 ws_atomic_write() {
@@ -366,6 +417,7 @@ manage_users() {
                     if [[ "$u" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
                         if id "$u" &>/dev/null; then
                             usermod -aG "$SHARED_GROUP" "$u"
+                            create_user_symlink "$u"
                             success "'$u' 已加入 '$SHARED_GROUP'"
                         else
                             error "'$u' 不存在或格式不合法"
@@ -380,6 +432,7 @@ manage_users() {
                 if [[ "$username" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
                     if id "$username" &>/dev/null; then
                         gpasswd -d "$username" "$SHARED_GROUP"
+                        remove_user_symlink "$username"
                         success "'$username' 已从 '$SHARED_GROUP' 移除"
                     else
                         error "'$username' 不存在或格式不合法"
@@ -411,11 +464,12 @@ manage_users() {
                     [[ "$uid" -lt 1000 || "$uid" -ge 65534 ]] && continue
                     if ! id -nG "$u" | grep -qw "$SHARED_GROUP"; then
                         usermod -aG "$SHARED_GROUP" "$u"
+                        create_user_symlink "$u"
                         echo "  + $u"
                         ((count++))
                     fi
                 done < /etc/passwd
-                success "已添加 $count 个用户"
+                success "已添加 $count 个用户（含 ~/workspace 软链接）"
                 ;;
             5) break ;;
             *) error "无效选择"; sleep 1 ;;
