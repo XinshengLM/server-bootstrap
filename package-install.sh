@@ -414,30 +414,38 @@ install_1panel() {
     echo -e "${BOLD}========== 1Panel 安装 ==========${NC}"
 
     # 检查是否已安装
-    if command -v 1panel &>/dev/null; then
+    if command -v 1pctl &>/dev/null; then
         warn "1Panel 已安装"
         read -rp "是否重新安装? [y/N]: " reinstall
         [[ ! "$reinstall" =~ ^[Yy] ]] && return 0
     fi
 
-    info "正在下载 1Panel 安装脚本..."
+    # 检查 Docker 是否安装（1Panel 依赖 Docker）
+    if ! command -v docker &>/dev/null; then
+        warn "1Panel 依赖 Docker，请先安装 Docker"
+        return 1
+    fi
 
-    # 获取最新安装脚本
-    if ! curl -fsSL https://resource.fit/panel/install_panel.sh -o /tmp/1panel_install.sh; then
+    info "正在下载 1Panel 官方安装脚本..."
+
+    local script_url="https://resource.fit2cloud.com/1panel/package/v2/quick_start.sh"
+    local install_script="/tmp/1panel_quick_start.sh"
+
+    # 下载安装脚本
+    if ! curl -sSL "$script_url" -o "$install_script"; then
         error "1Panel 安装脚本下载失败"
         return 1
     fi
-    chmod +x /tmp/1panel_install.sh
 
     # 执行安装
-    info "正在执行 1Panel 安装..."
-    bash /tmp/1panel_install.sh
+    info "正在执行 1Panel 安装（官方脚本）..."
+    bash "$install_script"
 
     # 清理
-    rm -f /tmp/1panel_install.sh
+    rm -f "$install_script"
 
-    # 验证
-    if ! command -v 1panel &>/dev/null; then
+    # 验证（1pctl 是 1Panel 的命令行管理工具）
+    if ! command -v 1pctl &>/dev/null; then
         error "1Panel 安装验证失败"
         return 1
     fi
@@ -445,8 +453,13 @@ install_1panel() {
     success "1Panel 安装完成"
     echo ""
     echo -e "${YELLOW}管理命令：${NC}"
-    echo "  1pctl: 命令行管理工具"
-    echo "  登录地址: https://IP:8888"
+    echo "  1pctl user-info    # 查看面板访问信息（入口、用户名、密码）"
+    echo "  1pctl update password  # 修改密码"
+    echo "  1pctl status       # 查看状态"
+    echo ""
+    echo -e "${YELLOW}访问地址：${NC}"
+    echo "  http://服务器IP:端口/安全入口"
+    echo "  使用 '1pctl user-info' 查看具体信息"
     echo ""
 }
 
@@ -665,34 +678,66 @@ install_fd() {
 
     # 检查是否已安装
     if command -v fd &>/dev/null; then
-        warn "fd 已安装"
+        warn "fd 已安装: $(fd --version 2>&1)"
         read -rp "是否重新安装? [y/N]: " reinstall
         [[ ! "$reinstall" =~ ^[Yy] ]] && return 0
     fi
 
-    info "正在下载 fd 二进制..."
-
     local arch=$(uname -m)
     case "$arch" in
-        x86_64) arch="amd64" ;;
-        aarch64) arch="arm64" ;;
+        x86_64) arch="x86_64" ;;
+        aarch64) arch="aarch64" ;;
         armv7l) arch="armv7" ;;
         *) error "不支持的架构: $arch"; return 1 ;;
     esac
 
-    local download_url="https://github.com/sharkdp/fd/releases/download/v9.0.0/fd-${arch}"
-    local binfile="/usr/local/bin/fd"
-
-    # 下载
-    if ! curl -fsSL "$download_url" -o "$binfile"; then
-        error "fd 下载失败"
-        return 1
+    # 优先使用 apt 安装（简单可靠）
+    if [[ -f /etc/debian_version ]] || [[ -f /etc/lsb-release ]]; then
+        info "检测到 Debian/Ubuntu，使用 apt 安装 fd..."
+        DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y fd-find
+        # Ubuntu/Debian 上 fd 包名叫 fdfind，创建软链接
+        if command -v fdfind &>/dev/null && ! command -v fd &>/dev/null; then
+            ln -sf "$(which fdfind)" /usr/local/bin/fd
+        fi
+    elif [[ -f /etc/redhat-release ]] || [[ -f /etc/centos-release ]]; then
+        info "检测到 RHEL/CentOS，使用 yum 安装 fd..."
+        yum install -y fd-find 2>/dev/null || {
+            # yum 没有的话用 dnf
+            dnf install -y fd-find 2>/dev/null || {
+                # 最后尝试从 GitHub 下载 deb/rpm
+                info "尝试从 GitHub 下载 fd..."
+                local fd_version="10.2.0"
+                local download_url="https://github.com/sharkdp/fd/releases/download/v${fd_version}/fd-v${fd_version}-${arch}-unknown-linux-musl.tar.gz"
+                local tmpdir="/tmp/fd-install"
+                mkdir -p "$tmpdir"
+                if curl -fsSL "$download_url" -o "$tmpdir/fd.tar.gz"; then
+                    tar -xzf "$tmpdir/fd.tar.gz" -C "$tmpdir"
+                    cp "$tmpdir"/fd-v*/fd /usr/local/bin/fd
+                    chmod +x /usr/local/bin/fd
+                fi
+                rm -rf "$tmpdir"
+            }
+        }
+    else
+        # 其他发行版从 GitHub 下载
+        info "从 GitHub 下载 fd..."
+        local fd_version="10.2.0"
+        local download_url="https://github.com/sharkdp/fd/releases/download/v${fd_version}/fd-v${fd_version}-${arch}-unknown-linux-musl.tar.gz"
+        local tmpdir="/tmp/fd-install"
+        mkdir -p "$tmpdir"
+        if ! curl -fsSL "$download_url" -o "$tmpdir/fd.tar.gz"; then
+            error "fd 下载失败"
+            rm -rf "$tmpdir"
+            return 1
+        fi
+        tar -xzf "$tmpdir/fd.tar.gz" -C "$tmpdir"
+        cp "$tmpdir"/fd-v*/fd /usr/local/bin/fd
+        chmod +x /usr/local/bin/fd
+        rm -rf "$tmpdir"
     fi
 
-    chmod +x "$binfile"
-
     # 验证
-    if ! fd --version &>/dev/null; then
+    if ! command -v fd &>/dev/null; then
         error "fd 安装验证失败"
         return 1
     fi
@@ -701,9 +746,10 @@ install_fd() {
     fd --version
     echo ""
     echo -e "${YELLOW}常用命令：${NC}"
-    echo "  fd                 # 列出当前目录"
-    echo "  fd -t 10s         # 搜索最近修改的文件"
-    echo "  fd -H -e '.*\.log$'    # 查找日志文件"
+    echo "  fd PATTERN           # 按名称搜索文件"
+    echo "  fd -e txt PATTERN    # 按扩展名搜索"
+    echo "  fd -t f -t d         # 搜索文件和目录"
+    echo "  fd -H PATTERN        # 包含隐藏文件"
     echo ""
 }
 
@@ -714,11 +760,17 @@ install_bat() {
     echo ""
     echo -e "${BOLD}========== bat 安装 ==========${NC}"
 
-    # 检查是否已安装
+    # 检查是否已安装（Ubuntu 上命令名可能是 batcat）
     if command -v bat &>/dev/null; then
-        warn "bat 已安装: $(bat --version)"
+        warn "bat 已安装: $(bat --version 2>&1)"
         read -rp "是否重新安装? [y/N]: " reinstall
         [[ ! "$reinstall" =~ ^[Yy] ]] && return 0
+    elif command -v batcat &>/dev/null; then
+        warn "bat 已安装 (batcat): $(batcat --version 2>&1)"
+        # 创建软链接统一命令名
+        ln -sf "$(which batcat)" /usr/local/bin/bat
+        success "已创建 bat -> batcat 软链接"
+        return 0
     fi
 
     # 检测发行版
@@ -741,6 +793,11 @@ install_bat() {
         apt)
             info "正在安装 bat..."
             DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y bat
+            # Ubuntu/Debian 上 bat 的命令名是 batcat，创建软链接
+            if command -v batcat &>/dev/null && ! command -v bat &>/dev/null; then
+                ln -sf "$(which batcat)" /usr/local/bin/bat
+                info "已创建 bat -> batcat 软链接"
+            fi
             ;;
         yum)
             info "正在安装 bat..."
@@ -752,18 +809,24 @@ install_bat() {
             ;;
     esac
 
-    # 验证
-    if ! bat --version &>/dev/null; then
+    # 验证（检查 bat 或 batcat）
+    if ! command -v bat &>/dev/null && ! command -v batcat &>/dev/null; then
         error "bat 安装验证失败"
         return 1
     fi
 
     success "bat 安装完成"
-    bat --version
+    # 优先使用 bat 命令，否则用 batcat
+    if command -v bat &>/dev/null; then
+        bat --version
+    else
+        batcat --version
+    fi
     echo ""
     echo -e "${YELLOW}使用方法：${NC}"
-    echo "  bat                # 列出文件（带语法高亮）"
-    echo "  bat 文件名         # 查看特定文件"
+    echo "  bat 文件名         # 查看文件（带语法高亮和行号）"
+    echo "  bat -l python 文件 # 指定语言高亮"
+    echo "  bat -A             # 显示不可见字符"
     echo ""
 }
 
