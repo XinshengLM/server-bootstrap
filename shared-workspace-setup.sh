@@ -562,7 +562,6 @@ $(basename "$SHARED_DIR")/
 - 新文件自动继承共享组权限（通过 SGID + ACL）
 - tmp 目录有 sticky bit 保护，只能删自己的文件
 GUIDE
-EOF
 
     chgrp "$SHARED_GROUP" "$guide_file" 2>/dev/null || true
     chmod 664 "$guide_file"
