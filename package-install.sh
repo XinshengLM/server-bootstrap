@@ -968,62 +968,66 @@ install_maldet() {
 
     # 检查是否已安装
     if command -v maldet &>/dev/null; then
-        warn "Maldet 已安装: $(maldet --version)"
+        warn "Maldet 已安装"
         read -rp "是否重新安装? [y/N]: " reinstall
         [[ ! "$reinstall" =~ ^[Yy] ]] && return 0
     fi
 
-    # 检测发行版
-    local pkg_manager=""
-    if [[ -f /etc/debian_version ]] || [[ -f /etc/lsb-release ]]; then
-        pkg_manager="apt"
-    elif [[ -f /etc/redhat-release ]] || [[ -f /etc/centos-release ]]; then
-        pkg_manager="yum"
-    elif [[ -f /etc/alpine-release ]]; then
-        pkg_manager="apk"
-    elif [[ -f /etc/arch-release ]]; then
-        pkg_manager="pacman"
-    else
-        error "无法检测发行版，请手动安装 Maldet"
+    # Maldet (Linux Malware Detect) 不在系统包管理器中
+    # 需要从官方源码安装: https://www.rfxn.com/projects/linux-malware-detect
+    info "从官方源码安装 Maldet (LMD)..."
+
+    local maldet_url="https://www.rfxn.com/downloads/maldetect-current.tar.gz"
+    local tmpdir="/tmp/maldet-install"
+
+    # 清理旧文件
+    rm -rf "$tmpdir"
+    mkdir -p "$tmpdir"
+
+    # 下载
+    info "正在下载 Maldet..."
+    if ! curl -fsSL "$maldet_url" -o "$tmpdir/maldetect.tar.gz"; then
+        error "Maldet 下载失败，请检查网络连接"
+        rm -rf "$tmpdir"
         return 1
     fi
 
-    info "检测到包管理器: $pkg_manager"
+    # 解压
+    info "正在解压..."
+    if ! tar -xzf "$tmpdir/maldetect.tar.gz" -C "$tmpdir"; then
+        error "Maldet 解压失败"
+        rm -rf "$tmpdir"
+        return 1
+    fi
 
     # 安装
-    case "$pkg_manager" in
-        apt)
-            info "正在安装 Maldet..."
-            DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y maldet
-            ;;
-        yum)
-            info "正在安装 Maldet..."
-            yum install -y maldet
-            ;;
-        apk)
-            info "正在安装 Maldet..."
-            apk add maldet
-            ;;
-        pacman)
-            info "正在安装 Maldet..."
-            pacman -S --noconfirm maldet
-            ;;
-    esac
+    info "正在执行安装..."
+    local install_dir="$tmpdir"/maldetect-*
+    if [[ -d "$install_dir" ]] && [[ -f "$install_dir/install.sh" ]]; then
+        bash "$install_dir/install.sh"
+    else
+        error "未找到安装脚本"
+        rm -rf "$tmpdir"
+        return 1
+    fi
+
+    # 清理
+    rm -rf "$tmpdir"
 
     # 验证
-    if ! maldet --version &>/dev/null; then
+    if ! command -v maldet &>/dev/null; then
         error "Maldet 安装验证失败"
         return 1
     fi
 
     success "Maldet 安装完成"
-    maldet --version
     echo ""
     echo -e "${YELLOW}使用方法：${NC}"
-    echo "  maldet /               # 扫描当前目录"
-    echo "  maldet -a /            # 扫描所有文件系统"
-    echo "  maldet -r /home        # 扫描 home 目录"
-    echo "  maldet --list           # 列出已知病毒"
+    echo "  maldet -a /               # 扫描所有文件"
+    echo "  maldet -a /home           # 扫描 home 目录"
+    echo "  maldet -r /var/www        # 扫描指定目录"
+    echo "  maldet --scan-recent       # 扫描最近修改的文件"
+    echo "  maldet -u                  # 更新恶意软件特征库"
     echo ""
 }
 
@@ -1225,21 +1229,21 @@ main_menu() {
         read -rp "  请选择 [0-15]: " choice
 
         case "$choice" in
-            1) install_node "24.15.0" ;;
-            2) install_python "3.12" ;;
-            3) install_docker ;;
-            4) install_mysql ;;
-            5) install_1panel ;;
-            6) install_nginx ;;
-            7) install_7z "24.05" ;;
-            8) install_jq ;;
-            9) install_fd ;;
-            10) install_bat ;;
-            11) install_fail2ban ;;
-            12) install_ufw ;;
-            13) install_maldet ;;
-            14) install_htop ;;
-            15) install_all ;;
+            1) install_node "24.15.0" || true ;;
+            2) install_python "3.12" || true ;;
+            3) install_docker || true ;;
+            4) install_mysql || true ;;
+            5) install_1panel || true ;;
+            6) install_nginx || true ;;
+            7) install_7z "24.05" || true ;;
+            8) install_jq || true ;;
+            9) install_fd || true ;;
+            10) install_bat || true ;;
+            11) install_fail2ban || true ;;
+            12) install_ufw || true ;;
+            13) install_maldet || true ;;
+            14) install_htop || true ;;
+            15) install_all || true ;;
             0)
                 echo -e "\n  再见！\n"
                 exit 0
