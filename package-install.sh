@@ -110,7 +110,7 @@ install_node() {
 
     # 检查是否已安装
     if command -v node &>/dev/null; then
-        installed_version=$(node -v 2>/dev/null | cut -d' ' -f1)
+        installed_version=$(node -v 2>/dev/null | sed 's/^v//' | cut -d' ' -f1)
         if [[ "$installed_version" == "$node_version" ]]; then
             warn "Node.js $node_version 已安装"
             read -rp "是否覆盖安装? [y/N]: " reinstall
@@ -181,7 +181,7 @@ install_python() {
     # 检查是否已安装
     if command -v python3 &>/dev/null; then
         local installed_version
-        installed_version=$(python3 -V 2>&1 | cut -d' ' -f2 | cut -d. -f1)
+        installed_version=$(python3 -V 2>&1 | cut -d' ' -f2 | cut -d. -f1,2)
         if [[ "$installed_version" == "$python_version" ]]; then
             warn "Python $python_version 已安装"
             read -rp "是否重新安装? [y/N]: " reinstall
@@ -359,10 +359,18 @@ install_mysql() {
     if [[ "$pkg_manager" == "apt" ]]; then
         info "配置 MySQL APT 仓库..."
         DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y software-properties-common
-        if ! grep -q "mysql-apt-config" /etc/apt/sources.list.d/*.list 2>/dev/null; then
-            wget -qO - https://repo.mysql.com/apt/mysql-apt-config_0.8.0-1_all.deb
-            dpkg -i mysql-apt-config_0.8.0-1_all.deb
-            apt-get update
+        if ! grep -q "mysql" /etc/apt/sources.list.d/*.list 2>/dev/null; then
+            local deb_url="https://repo.mysql.com/apt/mysql-apt-config_0.8.0-1_all.deb"
+            local deb_file="/tmp/mysql-apt-config.deb"
+            info "正在下载 MySQL APT 配置包..."
+            if wget -qO "$deb_file" "$deb_url"; then
+                DEBIAN_FRONTEND=noninteractive dpkg -i "$deb_file"
+                apt-get update -qq
+                rm -f "$deb_file"
+            else
+                warn "MySQL APT 配置包下载失败，尝试直接安装 mysql-server"
+                apt-get update -qq
+            fi
         fi
     fi
 
@@ -1053,20 +1061,43 @@ install_all() {
 
     info "开始一键全部安装，请等待..."
 
-    install_node "24.15.0"
-    install_python "3.12"
-    install_docker
-    install_mysql
-    install_1panel
-    install_nginx
-    install_7z "24.05"
-    install_jq
-    install_fd
-    install_bat
-    install_fail2ban
-    install_ufw
+    local failed=()
 
-    success "全部软件安装完成！"
+    install_node "24.15.0"     || failed+=("Node.js")
+    pkg_rollback_clear
+    install_python "3.12"      || failed+=("Python")
+    pkg_rollback_clear
+    install_docker             || failed+=("Docker")
+    pkg_rollback_clear
+    install_mysql              || failed+=("MySQL")
+    pkg_rollback_clear
+    install_1panel             || failed+=("1Panel")
+    pkg_rollback_clear
+    install_nginx              || failed+=("Nginx")
+    pkg_rollback_clear
+    install_7z "24.05"         || failed+=("7-Zip")
+    pkg_rollback_clear
+    install_jq                 || failed+=("jq")
+    pkg_rollback_clear
+    install_fd                 || failed+=("fd")
+    pkg_rollback_clear
+    install_bat                || failed+=("bat")
+    pkg_rollback_clear
+    install_fail2ban           || failed+=("Fail2Ban")
+    pkg_rollback_clear
+    install_ufw                || failed+=("UFW")
+    pkg_rollback_clear
+
+    if [[ ${#failed[@]} -eq 0 ]]; then
+        success "全部软件安装完成！"
+    else
+        warn "以下软件安装失败:"
+        for f in "${failed[@]}"; do
+            echo -e "  ${RED}✗ $f${NC}"
+        done
+        echo ""
+        echo -e "  ${GREEN}其他软件已安装成功${NC}"
+    fi
     echo ""
     echo -e "${YELLOW}验证安装：${NC}"
     echo "  node -v              # Node.js"
