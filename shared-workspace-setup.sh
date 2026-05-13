@@ -256,7 +256,7 @@ init_workspace() {
     generate_guide_silent
 
     # 清空回滚栈
-    ws_rollback_clear()
+    ws_rollback_clear
 
     echo ""
     echo -e "${CYAN}========== 共享工作区初始化完成 ==========${NC}"
