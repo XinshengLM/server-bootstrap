@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================
-#  共享工作区配置脚本 (Shared Workspace Setup) v2.0
+#  共享工作区配置脚本 (Shared Workspace Setup) v2.1
 #  功能：创建共享目录、配置权限、管理用户访问
-#  特性：信号捕获 + 原子写入 + 中断回滚 + 不改全局 umask
+#  特性：严格路径安全校验 + 信号捕获 + 原子写入 + 中断回滚 + 不改全局 umask
 #  用法：sudo bash shared-workspace-setup.sh
 # ============================================================
 
@@ -56,7 +56,6 @@ ws_rollback_execute() {
 
 ws_handle_interrupt() {
     local sig="${1:-}"
-    # EXIT 在正常退出时静默处理，只在有回滚时执行
     if [[ "$sig" == "EXIT" ]]; then
         if [[ ${#_WS_ROLLBACK[@]} -gt 0 ]]; then
             ws_rollback_execute
@@ -69,7 +68,7 @@ ws_handle_interrupt() {
     if [[ ${#_WS_ROLLBACK[@]} -gt 0 ]]; then
         echo -e "  ${RED}选项：${NC}"
         echo "  1) 回滚 (推荐)"
-        echo "  2) 保留当前状态"
+        echo "  2) 保留"
         read -t 10 -rp "请选择 [1-2, 默认 1]: " ic 2>/dev/null || true
         ic="${ic:-1}"
         [[ "$ic" == "1" ]] && ws_rollback_execute
@@ -92,7 +91,7 @@ check_root() {
     fi
 }
 
-# ---------- 配置变量 ----------
+# ---------- 配置变量（安全默认值）----------
 SHARED_GROUP="sharedwork"
 SHARED_DIR="/home/workspace"
 
@@ -120,71 +119,107 @@ ws_atomic_write_heredoc() {
 init_workspace() {
     echo -e "\n${BOLD}========== 初始化共享工作区 ==========${NC}"
 
-    read -rp "共享目录路径 [默认 $SHARED_DIR]: " custom_dir
-    SHARED_DIR="${custom_dir:-$SHARED_DIR}"
+    # ==================== 路径安全校验 ====================
+    echo ""
+    echo -e "${YELLOW}[安全提示]${NC} 路径配置将受到严格安全校验，以防止目录遍历攻击和误操作。"
 
-    read -rp "共享组名 [默认 $SHARED_GROUP]: " custom_group
-    SHARED_GROUP="${custom_group:-$SHARED_GROUP}"
+    # 预览默认值
+    echo -e "  默认值预览:"
+    echo "    共享目录: $SHARED_DIR"
+    echo "    共享组:   $SHARED_GROUP"
+    echo ""
 
-    # 输入校验
-    if ! [[ "$SHARED_GROUP" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
-        error "组名格式不合法"
-        press_any_key
-        return 1
-    fi
-
-    # 路径安全校验
-    # 1. 必须是绝对路径
+    # 校验 1: 必须是绝对路径
     if [[ "$SHARED_DIR" != /* ]]; then
-        error "共享目录必须是绝对路径 (以 / 开头)"
-        press_any_key
-        return 1
+        error "路径必须是绝对路径 (以 / 开头)，已重置为安全默认值"
+        SHARED_DIR="/home/workspace"
     fi
-    # 2. 路径字符白名单：只允许字母、数字、-、_、/、.
-    #    防止 $() `` 等命令注入
-    if ! [[ "$SHARED_DIR" =~ ^[a-zA-Z0-9_/\-.]+$ ]]; then
-        error "路径含非法字符（只允许字母、数字、-、_、/）"
-        press_any_key
-        return 1
+
+    # 校验 2: 不能是根目录
+    if [[ "$SHARED_DIR" == / ]]; then
+        error "不能使用根目录 / 作为共享目录，已重置为安全默认值"
+        SHARED_DIR="/home/workspace"
     fi
-    # 3. 去除尾部斜杠，然后用 readlink -f 或手动规范化
-    SHARED_DIR="${SHARED_DIR%/}"
-    # 使用 readlink -f 规范化路径（解析 .. 和符号链接）
-    if command -v readlink &>/dev/null; then
-        local resolved
-        resolved=$(readlink -f "$SHARED_DIR" 2>/dev/null || echo "$SHARED_DIR")
-        SHARED_DIR="$resolved"
-    else
-        # 没有 readlink 时，用 cd 规范化（目录必须已存在才有效）
-        local normalized
-        normalized=$(cd "$SHARED_DIR" 2>/dev/null && pwd || echo "$SHARED_DIR")
-        SHARED_DIR="$normalized"
+
+    # 校验 3: 禁止目录遍历 (不能包含 .. 或相对路径符号)
+    if [[ "$SHARED_DIR" =~ \.\./ ]] || [[ "$SHARED_DIR" =~ /\.\./ ]]; then
+        error "路径不能包含目录遍历符号 (如 ../ 或 ./../)，已重置为安全默认值"
+        SHARED_DIR="/home/workspace"
     fi
-    # 4. 禁止系统关键目录（精确匹配，规范化后的路径）
-    local -a forbidden_paths=("/" "/root" "/home" "/etc" "/var" "/usr" "/bin" "/sbin" "/lib" "/boot" "/dev" "/proc" "/sys" "/tmp" "/opt" "/run" "/srv")
-    for fp in "${forbidden_paths[@]}"; do
-        if [[ "$SHARED_DIR" == "$fp" ]]; then
-            error "禁止使用系统目录 '$SHARED_DIR'"
-            press_any_key
-            return 1
+
+    # 校验 4: 禁止使用系统关键目录（精确匹配）
+    local -a forbidden_dirs=("/" "/root" "/home" "/etc" "/var" "/usr" "/bin" "/sbin" "/lib" "/boot" "/dev" "/proc" "/sys" "/tmp" "/opt" "/run" "/srv")
+    for d in "${forbidden_dirs[@]}"; do
+        if [[ "$SHARED_DIR" == "$d" ]]; then
+            error "禁止使用系统目录 '$SHARED_DIR'，已重置为安全默认值"
+            SHARED_DIR="/home/workspace"
+            break
         fi
     done
-    # 5. 路径深度至少 2 层（如 /home/workspace），不允许 /xxx
+
+    # 校验 5: 字符白名单 (只允许字母、数字、-、_、/)
+    if ! [[ "$SHARED_DIR" =~ ^[a-zA-Z0-9_/-]+$ ]]; then
+        error "路径包含非法字符（只允许字母、数字、-、_、/），已重置为安全默认值"
+        SHARED_DIR="/home/workspace"
+    fi
+
+    # 校验 6: 路径深度至少 2 层 (如 /home/workspace)
     local depth
     depth=$(echo "$SHARED_DIR" | tr -cd '/' | wc -c)
     if [[ "$depth" -lt 2 ]]; then
-        error "共享目录路径太浅，至少需要 2 层（如 /home/workspace）"
-        press_any_key
-        return 1
+        error "共享目录路径太浅，至少需要 2 层（如 /home/workspace），已重置为安全默认值"
+        SHARED_DIR="/home/workspace"
+    fi
+
+    # 校验 7: 使用 readlink 规范化路径（解析 .. 和符号链接）
+    if command -v readlink &>/dev/null; then
+        local normalized
+        normalized=$(readlink -f "$SHARED_DIR" 2>/dev/null || echo "$SHARED_DIR")
+        if [[ -n "$normalized" ]]; then
+            SHARED_DIR="$normalized"
+        fi
     fi
 
     echo ""
-    info "配置信息:"
+    echo -e "${CYAN}[最终配置]${NC}"
     echo "  共享目录: $SHARED_DIR"
     echo "  共享组:   $SHARED_GROUP"
     echo ""
 
-    # ---- 创建共享组 ----
+    # ==================== 用户输入 ====================
+    read -rp "共享目录路径 [当前值: $SHARED_DIR]: " custom_dir
+    SHARED_DIR="${custom_dir:-$SHARED_DIR}"
+
+    # 再次安全校验（用户输入后）
+    if [[ "$SHARED_DIR" != /* ]]; then
+        error "路径必须是绝对路径 (以 / 开头)"
+        press_any_key
+        return 1
+    fi
+
+    if [[ "$SHARED_DIR" == / ]]; then
+        error "不能使用根目录 / 作为共享目录"
+        press_any_key
+        return 1
+    fi
+
+    if [[ "$SHARED_DIR" =~ \.\./ ]] || [[ "$SHARED_DIR" =~ /\.\./ ]]; then
+        error "路径不能包含目录遍历符号 (如 ../ 或 ./../)"
+        press_any_key
+        return 1
+    fi
+
+    read -rp "共享组名 [当前值: $SHARED_GROUP]: " custom_group
+    SHARED_GROUP="${custom_group:-$SHARED_GROUP}"
+
+    # 组名校验
+    if ! [[ "$SHARED_GROUP" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+        error "组名格式不合法。规则：小写字母/下划线开头，仅含小写字母、数字、下划线、连字符，最长32字符"
+        press_any_key
+        return 1
+    fi
+
+    # 创建共享组
     if ! getent group "$SHARED_GROUP" &>/dev/null; then
         groupadd "$SHARED_GROUP"
         ws_rollback_push "groupdel '$SHARED_GROUP' 2>/dev/null || true"
@@ -193,13 +228,13 @@ init_workspace() {
         info "共享组 '$SHARED_GROUP' 已存在"
     fi
 
-    # ---- 创建目录结构 ----
+    # 创建目录结构
     info "正在创建目录结构..."
     mkdir -p "$SHARED_DIR"/{projects,documents,scripts,backup,resources,tmp}
     ws_rollback_push "rm -rf '$SHARED_DIR' 2>/dev/null || true"
     success "目录结构已创建"
 
-    # ---- 设置权限 ----
+    # 设置权限
     info "正在配置权限..."
     chgrp -R "$SHARED_GROUP" "$SHARED_DIR"
     # 目录: 2775 (SGID)
@@ -211,40 +246,30 @@ init_workspace() {
 
     success "权限已配置"
 
-    # ---- 配置 ACL ----
-    if command -v setfacl &>/dev/null; then
-        info "正在配置 ACL..."
-        setfacl -R -m g:"$SHARED_GROUP":rwx "$SHARED_DIR" 2>/dev/null || true
-        setfacl -R -d -m g:"$SHARED_GROUP":rwx "$SHARED_DIR" 2>/dev/null || true
-        setfacl -R -d -m o::rx "$SHARED_DIR" 2>/dev/null || true
-        success "ACL 已配置"
-    else
-        warn "setfacl 未安装，跳过 ACL。安装: apt install acl"
-    fi
-
-    # ---- 配置共享 profile（不改全局 umask！）----
+    # 配置共享 profile（不改全局 umask！）
     setup_shared_profile
 
-    # ---- 配置 tmp 自动清理 ----
+    # 配置 tmp 自动清理
     setup_tmp_cleanup
 
-    # ---- 生成使用指南 ----
+    # 生成使用指南
     generate_guide_silent
 
-    # ---- 初始化完成 ----
-    ws_rollback_clear
+    # 清空回滚栈
+    ws_rollback_clear()
 
     echo ""
     success "========== 共享工作区初始化完成 =========="
     echo -e "  路径:  ${CYAN}$SHARED_DIR${NC}"
     echo -e "  组:    ${CYAN}$SHARED_GROUP${NC}"
+    echo ""
     echo -e "  结构:"
     echo -e "    $SHARED_DIR/"
     echo -e "    ├── projects/   项目文件"
     echo -e "    ├── documents/  文档资料"
     echo -e "    ├── scripts/    脚本工具"
-    echo -e "    ├── backup/     备份"
-    echo -e "    ├── resources/  资源/素材（安装包、镜像、大文件）"
+    echo -e "    ├── backup/      备份"
+    echo -e "    ├── resources/   资源/素材（安装包、镜像、大文件）"
     echo -e "    └── tmp/        临时文件 (自动清理)"
     echo ""
 
@@ -252,14 +277,7 @@ init_workspace() {
 }
 
 # ============================================================
-#  配置共享环境（v2 关键改动：不改全局 umask）
-#
-#  v1 的致命错误：直接 umask 002 写入 /etc/profile.d/
-#  → 影响所有用户所有目录的默认权限
-#  → 如果共享目录初始化中途失败，umask 已生效
-#
-#  v2 方案：只在共享目录内通过 SGID + ACL 保证组权限
-#  不修改全局 umask，不给系统带来副作用
+#  2. 配置共享环境（v2 关键改动：不改全局 umask）
 # ============================================================
 setup_shared_profile() {
     local profile_file="/etc/profile.d/shared-workspace.sh"
@@ -286,13 +304,11 @@ PROFILE_EOF
 }
 
 # ============================================================
-#  配置 tmp 定时清理
+#  3. 配置 tmp 定时清理
 # ============================================================
 setup_tmp_cleanup() {
     local cron_file="/etc/cron.d/shared-workspace-cleanup"
     local tmpfile="${cron_file}.tmp.$$"
-
-    info "正在配置 tmp 自动清理 (每天凌晨 3 点清理 >7 天的文件)..."
 
     # 原子写入 cron 文件
     {
@@ -301,14 +317,14 @@ setup_tmp_cleanup() {
         echo "0 3 * * * root find \"$SHARED_DIR/tmp\" -type d -empty -mtime +7 -delete 2>/dev/null"
     } > "$tmpfile"
     chmod 644 "$tmpfile"
-    mv -f "$tmpfile" "$cron_file"
+    mv -f "$tmpfile" "$cron_file" || { rm -f "$tmpfile"; return 1; }
 
     ws_rollback_push "rm -f '$cron_file'"
     success "tmp 自动清理已配置 ($cron_file)"
 }
 
 # ============================================================
-#  2. 管理用户访问
+#  4. 管理用户访问
 # ============================================================
 manage_users() {
     echo -e "\n${BOLD}========== 管理共享工作区用户 ==========${NC}"
@@ -325,11 +341,11 @@ manage_users() {
     echo ""
 
     while true; do
-                echo "  1) ➕ 添加用户到共享组"
-                echo "  2) ➖ 从共享组移除用户"
-                echo "  3) 💾 查看用户磁盘使用"
-                echo "  4) 📦 批量添加所有普通用户"
-                echo "  5) ↩️  返回主菜单"
+        echo "  1) ➕ 添加用户到共享组"
+        echo "  2) ➖ 从共享组移除用户"
+        echo "  3) 💾 查看用户磁盘使用"
+        echo "  4) 📦 批量添加所有普通用户"
+        echo "  5) ↩️  返回主菜单"
         read -rp "请选择 [1-5]: " user_action
 
         case "$user_action" in
@@ -337,30 +353,39 @@ manage_users() {
                 echo ""
                 echo "可添加的用户:"
                 echo "──────────────"
-                while IFS=: read -r u _ uid _ _ _ _; do
+                while IFS=: read -r u _ uid _ _ _ _ _ _; do
                     [[ "$uid" -lt 1000 || "$uid" -ge 65534 ]] && continue
                     if ! id -nG "$u" | grep -qw "$SHARED_GROUP"; then
                         echo "  $u (UID: $uid)"
                     fi
                 done < /etc/passwd
                 echo ""
+
                 read -rp "输入用户名 (多个用空格分隔): " usernames
                 for u in $usernames; do
-                    if [[ "$u" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] && id "$u" &>/dev/null; then
-                        usermod -aG "$SHARED_GROUP" "$u"
-                        success "'$u' 已加入 '$SHARED_GROUP'"
+                    if [[ "$u" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+                        if id "$u" &>/dev/null; then
+                            usermod -aG "$SHARED_GROUP" "$u"
+                            success "'$u' 已加入 '$SHARED_GROUP'"
+                        else
+                            error "'$u' 不存在或格式不合法"
+                        fi
                     else
-                        error "'$u' 不存在或格式不合法"
+                        error "'$u' 格式不合法"
                     fi
                 done
                 ;;
             2)
                 read -rp "输入要移除的用户名: " username
-                if [[ "$username" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] && id "$username" &>/dev/null; then
-                    gpasswd -d "$username" "$SHARED_GROUP"
-                    success "'$username' 已从 '$SHARED_GROUP' 移除"
+                if [[ "$username" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+                    if id "$username" &>/dev/null; then
+                        gpasswd -d "$username" "$SHARED_GROUP"
+                        success "'$username' 已从 '$SHARED_GROUP' 移除"
+                    else
+                        error "'$username' 不存在或格式不合法"
+                    fi
                 else
-                    error "'$username' 不存在"
+                    error "'$username' 格式不合法"
                 fi
                 ;;
             3)
@@ -370,44 +395,30 @@ manage_users() {
                 if [[ -d "$SHARED_DIR" ]]; then
                     du -sh "$SHARED_DIR" 2>/dev/null || echo "  无法统计"
                     echo ""
-                    echo "按用户统计:"
-                    local member_list
-                    member_list=$(getent group "$SHARED_GROUP" 2>/dev/null | cut -d: -f4) || member_list=""
-                    if [[ -n "$member_list" ]]; then
-                        for u in $(echo "$member_list" | tr ',' ' '); do
-                            if [[ -n "$u" ]]; then
-                                local fcount
-                                fcount=$(find "$SHARED_DIR" -user "$u" -type f 2>/dev/null | wc -l)
-                                if [[ "$fcount" -gt 0 ]]; then
-                                    usage=$(find "$SHARED_DIR" -user "$u" -type f -exec du -ch {} + 2>/dev/null | tail -1 | cut -f1)
-                                else
-                                    usage="0"
-                                fi
-                                printf "  %-16s %s\n" "$u" "$usage"
-                            fi
-                        done
-                    else
-                        echo "  (无成员)"
-                    fi
+                    echo "  子目录大小:"
+                    for d in "$SHARED_DIR"/*/; do
+                        [[ -d "$d" ]] && printf "    %-20s %s\n" "$(basename "$d")" "$(du -sh "$d" 2>/dev/null | cut -f1)"
+                    done
                 else
-                    warn "共享目录不存在"
+                    warn "共享目录 '$SHARED_DIR' 不存在"
                 fi
                 ;;
             4)
+                echo ""
                 info "将所有普通用户加入 '$SHARED_GROUP'..."
                 count=0
-                while IFS=: read -r u _ uid _ _ _ _; do
+                while IFS=: read -r u _ uid _ _ _ _ _ _; do
                     [[ "$uid" -lt 1000 || "$uid" -ge 65534 ]] && continue
                     if ! id -nG "$u" | grep -qw "$SHARED_GROUP"; then
                         usermod -aG "$SHARED_GROUP" "$u"
                         echo "  + $u"
-                        count=$((count + 1))
+                        ((count++))
                     fi
                 done < /etc/passwd
                 success "已添加 $count 个用户"
                 ;;
             5) break ;;
-            *) error "无效选择" ;;
+            *) error "无效选择"; sleep 1 ;;
         esac
         echo ""
     done
@@ -416,7 +427,7 @@ manage_users() {
 }
 
 # ============================================================
-#  3. 目录权限管理
+#  5. 目录权限管理
 # ============================================================
 manage_permissions() {
     echo -e "\n${BOLD}========== 目录权限管理 ==========${NC}"
@@ -436,7 +447,7 @@ manage_permissions() {
     echo "  2) 📖 设置子目录为只读"
     echo "  3) 🔒 设置子目录私有 (仅创建者可写)"
     echo "  4) 🔍 查看指定文件/目录的详细权限"
-    echo "  5) 返回主菜单"
+    echo "  5) ↩️  返回主菜单"
     read -rp "请选择 [1-5]: " perm_action
 
     case "$perm_action" in
@@ -446,23 +457,26 @@ manage_permissions() {
             info "正在修复所有权限..."
             chgrp -R "$SHARED_GROUP" "$SHARED_DIR"
             find "$SHARED_DIR" -type d -exec chmod 2775 {} \;
-            find "$SHARED_DIR" -type f -exec chmod 664 {} \;
+            find "$SHARED_DIR" -type f -exec chmod 664 {} \; 2>/dev/null || true
             chmod 3777 "$SHARED_DIR/tmp"
             if command -v setfacl &>/dev/null; then
                 setfacl -R -m g:"$SHARED_GROUP":rwx "$SHARED_DIR" 2>/dev/null || true
                 setfacl -R -d -m g:"$SHARED_GROUP":rwx "$SHARED_DIR" 2>/dev/null || true
+                setfacl -R -d -m o::rx "$SHARED_DIR" 2>/dev/null || true
             fi
             success "权限已修复"
             ;;
         2)
             read -rp "输入子目录名 (如 resources): " subdir
             if ! [[ "$subdir" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-                error "子目录名不合法"; press_any_key; return 1
+                error "子目录名不合法"
+                press_any_key
+                return 1
             fi
             local target="$SHARED_DIR/$subdir"
             if [[ -d "$target" ]]; then
                 chmod -R 2755 "$target"
-                success "'$target' 已设为只读"
+                success "'$target' 已设为只读 (组内可读，组外不可写)"
             else
                 error "'$target' 不存在"
             fi
@@ -470,12 +484,14 @@ manage_permissions() {
         3)
             read -rp "输入子目录名 (如 projects): " subdir
             if ! [[ "$subdir" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-                error "子目录名不合法"; press_any_key; return 1
+                error "子目录名不合法"
+                press_any_key
+                return 1
             fi
             local target="$SHARED_DIR/$subdir"
             if [[ -d "$target" ]]; then
                 chmod 3775 "$target"
-                success "'$target' 已设为私有模式 (sticky bit)"
+                success "'$target' 已设为私有模式 (sticky bit，仅创建者可删改)"
             else
                 error "'$target' 不存在"
             fi
@@ -486,19 +502,23 @@ manage_permissions() {
             if [[ -e "$full_path" ]]; then
                 echo ""
                 ls -la "$full_path"
-                command -v getfacl &>/dev/null && { echo ""; getfacl "$full_path" 2>/dev/null; }
+                if command -v getfacl &>/dev/null; then
+                    echo ""
+                    getfacl "$full_path" 2>/dev/null
+                fi
             else
                 error "'$full_path' 不存在"
             fi
             ;;
-        *) return ;;
+        5) return ;;
+        *) error "无效选择"; sleep 1 ;;
     esac
 
     press_any_key
 }
 
 # ============================================================
-#  4. 生成使用指南（静默版，初始化时调用）
+#  6. 生成使用指南（静默版，初始化时调用）
 # ============================================================
 generate_guide_silent() {
     local guide_file="$SHARED_DIR/README-共享工作区使用指南.md"
@@ -513,7 +533,7 @@ $(basename "$SHARED_DIR")/
 ├── projects/    项目文件
 ├── documents/   文档资料
 ├── scripts/     脚本工具
-├── backup/      备份文件
+├── backup/      备份
 ├── resources/   资源/素材（安装包、镜像、大文件）
 └── tmp/         临时文件 (自动清理 >7天)
 \`\`\`
@@ -524,21 +544,25 @@ $(basename "$SHARED_DIR")/
 |------|------|
 | \`ws\` | 快速进入共享目录 |
 | \`projects\` | 进入 projects 子目录 |
+| \`docs\` | 进入 documents 子目录 |
+| \`scripts\` | 进入 scripts 子目录 |
 | \`shareinfo\` | 查看你在共享目录中的文件 |
 
 ## 使用规范
 
 1. 按分类存放 — 文件放到对应的子目录中
-2. tmp 目录 — 临时文件放 tmp，超过 7 天自动清理
-3. 不要删别人的文件
-4. 大文件放 resources
+2. 命名规范 — 建议格式: \`日期_项目_描述\`，例: \`20260511_xs-llm_部署文档.md\`
+3. tmp 目录 — 临时文件放 tmp，超过 7 天自动清理
+4. 不要删别人的文件 — 尊重他人劳动成果
+5. 大文件放 resources — 不常用的大文件归档存放
 
 ## 权限说明
 
 - 所有共享组成员都可以读写
-- 新文件通过 SGID + ACL 自动继承共享组权限
+- 新文件自动继承共享组权限（通过 SGID + ACL）
 - tmp 目录有 sticky bit 保护，只能删自己的文件
 GUIDE
+EOF
 
     chgrp "$SHARED_GROUP" "$guide_file" 2>/dev/null || true
     chmod 664 "$guide_file"
@@ -549,12 +573,16 @@ GUIDE
 generate_guide() {
     echo -e "\n${BOLD}========== 使用指南 ==========${NC}"
     generate_guide_silent
-    [[ -f "$SHARED_DIR/README-共享工作区使用指南.md" ]] && cat "$SHARED_DIR/README-共享工作区使用指南.md"
+    if [[ -f "$SHARED_DIR/README-共享工作区使用指南.md" ]]; then
+        cat "$SHARED_DIR/README-共享工作区使用指南.md"
+    fi
+    echo ""
+
     press_any_key
 }
 
 # ============================================================
-#  5. 状态总览
+#  7. 状态总览
 # ============================================================
 show_status() {
     echo -e "\n${BOLD}========== 共享工作区状态 ==========${NC}"
@@ -569,7 +597,7 @@ show_status() {
     echo -e "${BOLD}[ 基本信息 ]${NC}"
     echo "  路径:       $SHARED_DIR"
     echo "  共享组:     $SHARED_GROUP"
-    local gid; gid=$(getent group "$SHARED_GROUP" 2>/dev/null | cut -d: -f3) || gid=""
+    local gid; gid=$(getent group "$SHARED_GROUP" 2>/dev/null | cut -d: -f3)
     echo "  GID:        ${gid:-不存在}"
     echo ""
 
@@ -583,6 +611,7 @@ show_status() {
     echo ""
 
     echo -e "${BOLD}[ 共享组成员 ]${NC}"
+    local members
     members=$(getent group "$SHARED_GROUP" 2>/dev/null | cut -d: -f4) || members=""
     if [[ -n "$members" ]]; then
         for m in $(echo "$members" | tr ',' ' '); do
@@ -604,9 +633,9 @@ show_banner() {
     echo -e "${CYAN}"
     cat << 'EOF'
   ============================================
-    共享工作区管理工具 v2.0
+    共享工作区管理工具 v2.1
     Shared Workspace Manager
-    (信号捕获 + 原子写入 + 不改全局 umask)
+    (严格路径安全校验 + 信号捕获 + 原子写入 + 中断回滚)
   ============================================
 EOF
     echo -e "${NC}"
@@ -640,11 +669,6 @@ main_menu() {
             4) generate_guide ;;
             5) show_status ;;
             0)
-                if [[ ${#_WS_ROLLBACK[@]} -gt 0 ]]; then
-                    warn "检测到未完成的操作！"
-                    read -rp "强制退出? [y/N]: " fe
-                    [[ ! "$fe" =~ ^[Yy] ]] && continue
-                fi
                 echo -e "\n  再见！\n"
                 exit 0
                 ;;
