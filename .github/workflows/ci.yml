@@ -19,8 +19,10 @@ jobs:
                 exit 1
               else
                 echo "✅ $script: 语法正确"
+              fi
             else
               echo "⚠️  $script: 文件不存在"
+            fi
           done
 
       - name: Shellcheck validation
@@ -30,10 +32,12 @@ jobs:
             echo "⚠️  shellcheck 未安装，跳过"
           else
             echo "=== Shellcheck 检查 ==="
-          for script in user-manager.sh shared-workspace-setup.sh package-install.sh; do
-            if [[ -f "$script" ]]; then
-              shellcheck -x "$script" || true
+            for script in user-manager.sh shared-workspace-setup.sh package-install.sh; do
+              if [[ -f "$script" ]]; then
+                shellcheck -x "$script" || true
+              fi
             done
+          fi
 
       - name: Check executable permissions
         run: |
@@ -44,8 +48,10 @@ jobs:
                 echo "✅ $script: 有执行权限"
               else
                 echo "❌ $script: 无执行权限"
+              fi
             else
               echo "⚠️  $script: 文件不存在"
+            fi
           done
 
   security-scan:
